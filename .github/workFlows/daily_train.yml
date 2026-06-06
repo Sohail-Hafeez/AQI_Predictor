@@ -1,0 +1,38 @@
+name: Daily Model Training
+
+on:
+  schedule:
+    - cron: "0 0 * * *"   # every day at midnight
+  workflow_dispatch:
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run training pipeline
+        env:
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+          MONGO_DB: aqi_db
+          MONGO_COLLECTION: raw_aqi_data
+        run: python training.py
+
+      - name: Commit updated model
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@github.com"
+          git add best_model.pkl
+          git commit -m "Auto-updated model"
+          git push
