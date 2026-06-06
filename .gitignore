@@ -45,9 +45,3 @@ Thumbs.db
 # =========================
 *.archive
 *.bson
-
-
-scratch/
-*.egg-info/
-
-scratch
