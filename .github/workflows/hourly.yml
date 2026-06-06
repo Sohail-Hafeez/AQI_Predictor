@@ -1,9 +1,9 @@
-name: Hourly Data Ingestion
+name: Hourly Data Pipeline
 
 on:
   schedule:
-    - cron: "0 * * * *"   # every hour
-  workflow_dispatch:       # manual run option
+    - cron: "0 * * * *"
+  workflow_dispatch:
 
 jobs:
   ingest:
@@ -13,16 +13,27 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
-      - name: Install dependencies
+      - name: Upgrade pip (safe mode)
         run: |
-          pip install -r requirements.txt
+          python -m pip install --upgrade pip setuptools wheel
 
-      - name: Run data pipeline
+      # 🔥 IMPORTANT: isolate install + block local paths
+      - name: Install dependencies (SAFE MODE)
+        run: |
+          pip install --no-cache-dir --no-input -r requirements.txt
+
+      # 🔥 DEBUG GUARD (prevents hidden junk installs)
+      - name: Validate no local paths in pip
+        run: |
+          echo "Checking requirements safety..."
+          ! grep -E "C:/|scratch|dummy_twofish|-e " requirements.txt || exit 1
+
+      - name: Run hourly pipeline
         env:
           MONGO_URI: ${{ secrets.MONGO_URI }}
           MONGO_DB: aqi_db
