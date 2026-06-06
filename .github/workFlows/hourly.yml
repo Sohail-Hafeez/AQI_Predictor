@@ -1,0 +1,32 @@
+name: Hourly Data Ingestion
+
+on:
+  schedule:
+    - cron: "0 * * * *"   # every hour
+  workflow_dispatch:       # manual run option
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run data pipeline
+        env:
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+          MONGO_DB: aqi_db
+          MONGO_COLLECTION: raw_aqi_data
+          LATITUDE: ${{ secrets.LATITUDE }}
+          LONGITUDE: ${{ secrets.LONGITUDE }}
+        run: python hourlyDataPipeline.py

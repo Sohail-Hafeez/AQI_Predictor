@@ -27,7 +27,7 @@ jobs:
           MONGO_URI: ${{ secrets.MONGO_URI }}
           MONGO_DB: aqi_db
           MONGO_COLLECTION: raw_aqi_data
-        run: python training.py
+        run: python Training.py
 
       - name: Commit updated model
         run: |
