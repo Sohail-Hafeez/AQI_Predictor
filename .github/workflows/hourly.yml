@@ -41,3 +41,4 @@ jobs:
           LATITUDE: ${{ secrets.LATITUDE }}
           LONGITUDE: ${{ secrets.LONGITUDE }}
         run: python hourlyDataPipeline.py
+        

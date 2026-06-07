@@ -350,7 +350,7 @@ def load_data():
     df = pd.DataFrame(data)
     if "_id" in df.columns:
         df = df.drop(columns=["_id"])
-    df["time"] = pd.to_datetime(df["time"])
+    df["time"] = df["time"] = pd.to_datetime(df["time"], format="mixed", utc=True)
     df = df.sort_values("time")
     return df
 
