@@ -304,3 +304,79 @@ This project is for educational and research purposes.
 ---
 
 *Built by the AQI Forecasting Team | Powered by Open-Meteo + MongoDB + scikit-learn + Streamlit*
+
+---
+
+## 🚧 Issues Faced
+
+This section documents the real-world challenges encountered during development and how each was resolved.
+
+---
+
+### 1. 📡 Data Source Limitations — OpenWeather & AQICN
+
+**Problem:**
+The project required historical AQI and pollutant data to build a meaningful training dataset. Two APIs were evaluated:
+
+- **OpenWeather** — Provided historical data, but the historical endpoint is **paid** and not accessible on a free tier.
+- **AQICN** — Only offered a **real-time snapshot** of current conditions. No historical data was available through its API.
+
+**Resolution:**
+Switched to the **[Open-Meteo API](https://open-meteo.com/)**, a completely free and open-source weather and air quality API. It provides:
+- Hourly historical air quality data (PM2.5, PM10, CO, NO₂, SO₂, O₃, methane, dust, European AQI)
+- Hourly historical and forecast weather data (temperature, humidity, pressure, wind speed)
+
+This allowed building a rich multi-month historical dataset with no API cost or rate limiting constraints.
+
+---
+
+### 2. 🗄️ Hopsworks Feature Store — Hudi Table Materialization Failure
+
+**Problem:**
+The original design used **Hopsworks Feature Store** to store engineered features. Hopsworks normally auto-creates an offline Apache Hudi table when data is inserted into a feature group. However, in this project the Hudi table was never materialized, causing the following persistent error every time `fg.read()` was called:
+
+```
+FlightServerError: No hudi properties found for featuregroup:
+/apps/hive/warehouse/.../aqi_features_7
+This usually means that no data has been written yet to this feature group.
+```
+
+Investigation revealed that:
+- The Spark materialization jobs were getting stuck in `SUBMITTED` state on the Hopsworks free-tier YARN cluster — never transitioning to `RUNNING`
+- Multiple stale job executions from earlier versions (v3–v6) were clogging the cluster queue
+- Even after stopping the stale jobs and waiting over 45 minutes, the cluster did not pick up the new executions
+
+**Resolution:**
+Abandoned Hopsworks Feature Store and migrated to **MongoDB Atlas** as the data persistence layer:
+- Raw AQI + weather data is upserted hourly into a MongoDB collection
+- Feature engineering is performed in-memory at training time
+- Models are serialized and saved directly to a MongoDB `models` collection — no local file dependency
+
+This eliminated all cloud cluster dependency issues and made the pipeline significantly more reliable.
+
+---
+
+### 3. 🔁 GitHub Actions — Stale `requirements.txt` Cache Bug
+
+**Problem:**
+After cleaning up the `requirements.txt` file (which previously contained a local path reference: `twofish @ file:///C:/Users/.../scratch/dummy_twofish`), the GitHub Actions CI/CD workflow kept failing with a dependency error — even after the bad line had been deleted and the fix was committed and pushed.
+
+GitHub Actions was fetching and using an **older cached version** of `requirements.txt` that still contained the invalid local path, rather than the freshly committed version. This is unexpected behaviour — Actions should always use the file from the current commit.
+
+```
+ERROR: twofish @ file:///C:/Users/Mushaf/Desktop/AQI_Predictor/scratch/dummy_twofish
+       does not appear to be a Python project
+```
+
+Neither clearing pip cache steps nor force-pushing resolved the issue.
+
+**Resolution:**
+The only working fix was to:
+1. **Delete the entire GitHub repository**
+2. Create a **fresh repository** with a clean history
+3. Push all project files again to the new repo
+
+After the fresh push with a clean `requirements.txt`, the GitHub Actions workflow ran successfully with no stale cache issues.
+
+---
+
