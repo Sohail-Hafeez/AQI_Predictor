@@ -1,52 +1,57 @@
+import os
 import requests
 import pandas as pd
 from pymongo import MongoClient
-from datetime import datetime
-import pytz
 from dotenv import load_dotenv
-import os
+from datetime import datetime, timezone
 
 # ==================================================
-# LOAD ENV
+# LOAD ENV VARIABLES
 # ==================================================
+
 load_dotenv()
 
 MONGO_URI = os.getenv("MONGO_URI")
-DB_NAME = os.getenv("MONGO_DB", "aqi_db")
-COLLECTION_NAME = os.getenv("MONGO_COLLECTION", "raw_aqi_data")
+MONGO_DB = os.getenv("MONGO_DB")
+MONGO_COLLECTION = os.getenv("MONGO_COLLECTION")
 
 LATITUDE = float(os.getenv("LATITUDE"))
 LONGITUDE = float(os.getenv("LONGITUDE"))
 
 # ==================================================
-# CONNECT MONGO
+# CONNECT TO MONGODB
 # ==================================================
+
+print("Connecting to MongoDB...")
+
 client = MongoClient(MONGO_URI)
-db = client[DB_NAME]
-collection = db[COLLECTION_NAME]
 
-print("Connected to MongoDB")
+db = client[MONGO_DB]
+collection = db[MONGO_COLLECTION]
+
+print("Connected to MongoDB OK")
 
 # ==================================================
-# TIMEZONE (IMPORTANT FIX)
+# CURRENT UTC DATE
 # ==================================================
-pakistan_tz = pytz.timezone("Asia/Karachi")
-now = datetime.now(pakistan_tz)
 
-date_str = now.strftime("%Y-%m-%d")
+today_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-print("Running hourly pipeline for:", date_str)
+print(f"Running hourly pipeline for UTC date: {today_utc}")
 
 # ==================================================
 # FETCH AIR QUALITY DATA
 # ==================================================
+
+print("Fetching Air Quality data...")
+
 air_url = "https://air-quality-api.open-meteo.com/v1/air-quality"
 
 air_params = {
     "latitude": LATITUDE,
     "longitude": LONGITUDE,
-    "start_date": date_str,
-    "end_date": date_str,
+    "start_date": today_utc,
+    "end_date": today_utc,
     "hourly": [
         "pm10",
         "pm2_5",
@@ -60,7 +65,20 @@ air_params = {
     ]
 }
 
-air_data = requests.get(air_url, params=air_params, timeout=30).json()
+air_response = requests.get(
+    air_url,
+    params=air_params,
+    timeout=30
+)
+
+air_response.raise_for_status()
+
+air_data = air_response.json()
+
+if "hourly" not in air_data:
+    print("AIR API RESPONSE:")
+    print(air_data)
+    raise Exception("Air Quality API did not return hourly data")
 
 air_df = pd.DataFrame({
     "time": air_data["hourly"]["time"],
@@ -75,25 +93,42 @@ air_df = pd.DataFrame({
     "aqi": air_data["hourly"]["european_aqi"]
 })
 
+print("Air Quality data fetched OK")
+
 # ==================================================
 # FETCH WEATHER DATA
 # ==================================================
-weather_url = "https://archive-api.open-meteo.com/v1/archive"
+
+print("Fetching Weather data...")
+
+weather_url = "https://api.open-meteo.com/v1/forecast"
 
 weather_params = {
     "latitude": LATITUDE,
     "longitude": LONGITUDE,
-    "start_date": date_str,
-    "end_date": date_str,
     "hourly": [
         "temperature_2m",
         "relative_humidity_2m",
         "surface_pressure",
         "wind_speed_10m"
-    ]
+    ],
+    "forecast_days": 1
 }
 
-weather_data = requests.get(weather_url, params=weather_params, timeout=30).json()
+weather_response = requests.get(
+    weather_url,
+    params=weather_params,
+    timeout=30
+)
+
+weather_response.raise_for_status()
+
+weather_data = weather_response.json()
+
+if "hourly" not in weather_data:
+    print("WEATHER API RESPONSE:")
+    print(weather_data)
+    raise Exception("Weather API did not return hourly data")
 
 weather_df = pd.DataFrame({
     "time": weather_data["hourly"]["time"],
@@ -103,46 +138,71 @@ weather_df = pd.DataFrame({
     "wind_speed": weather_data["hourly"]["wind_speed_10m"]
 })
 
-# ==================================================
-# MERGE
-# ==================================================
-air_df["time"] = pd.to_datetime(air_df["time"])
-weather_df["time"] = pd.to_datetime(weather_df["time"])
-
-df = pd.merge(air_df, weather_df, on="time", how="inner")
+print("Weather data fetched OK")
 
 # ==================================================
-# CLEAN
+# MERGE DATA
 # ==================================================
+
+print("Merging datasets...")
+
+air_df["time"] = pd.to_datetime(air_df["time"], utc=True)
+weather_df["time"] = pd.to_datetime(weather_df["time"], utc=True)
+
+df = pd.merge(
+    air_df,
+    weather_df,
+    on="time",
+    how="inner"
+)
+
+if df.empty:
+    raise Exception("Merged dataframe is empty")
+
+# ==================================================
+# CLEAN DATA
+# ==================================================
+
 df = df.sort_values("time")
+
 df = df.drop_duplicates(subset=["time"])
 
-df = df.replace([float("inf"), float("-inf")], None)
-df = df.ffill().bfill().dropna()
+df = df.replace([float("inf"), float("-inf")], pd.NA)
+
+df = df.ffill()
+df = df.bfill()
+df = df.dropna()
 
 # ==================================================
-# UPSERT TO MONGO (NO DUPLICATES)
+# KEEP ONLY MOST RECENT HOUR
 # ==================================================
 
-print("Uploading to MongoDB (UPSERT MODE)...")
+latest_row = df.tail(1).copy()
 
-count = 0
+latest_row["time"] = latest_row["time"].astype(str)
 
-for record in df.to_dict(orient="records"):
-    
-    record["time"] = str(record["time"])
+print("\nLatest record:")
+print(latest_row)
 
-    collection.update_one(
-        {
-            "time": record["time"],
-            "latitude": LATITUDE,
-            "longitude": LONGITUDE
-        },
-        {"$set": record},
-        upsert=True
-    )
+# ==================================================
+# UPSERT INTO MONGODB
+# ==================================================
 
-    count += 1
+record = latest_row.iloc[0].to_dict()
 
-print(f"Inserted/Updated: {count}")
-print("Hourly pipeline completed ✔")
+result = collection.update_one(
+    {"time": record["time"]},
+    {"$set": record},
+    upsert=True
+)
+
+# ==================================================
+# LOG RESULTS
+# ==================================================
+
+if result.upserted_id:
+    print(f"Inserted new record: {result.upserted_id}")
+else:
+    print("Record already exists or updated")
+
+print("\nHourly pipeline completed successfully")
