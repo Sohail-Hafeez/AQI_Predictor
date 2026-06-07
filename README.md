@@ -1,4 +1,7 @@
-# 🌫️ AQI Predictor — Rawalpindi Air Quality Forecast System [Click to view]([https://open-meteo.com/](https://10pearlsaqiproject.streamlit.app/))
+# 🌫️ AQI Predictor — Rawalpindi Air Quality Forecast System 
+
+Live demo : [Click to view](https://10pearlsaqiproject.streamlit.app/)
+
 <img width="1366" height="727" alt="image" src="https://github.com/user-attachments/assets/be6e794b-277f-4de2-b54d-372aa5b1979d" />
 
 
