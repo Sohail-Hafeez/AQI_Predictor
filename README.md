@@ -1,4 +1,6 @@
 # 🌫️ AQI Predictor — Rawalpindi Air Quality Forecast System
+<img width="1366" height="727" alt="image" src="https://github.com/user-attachments/assets/be6e794b-277f-4de2-b54d-372aa5b1979d" />
+
 
 A **production-grade, end-to-end MLOps pipeline** that continuously ingests real-time air quality and weather data for Rawalpindi, Pakistan, trains machine learning models, and serves a **3-day AQI forecast** through an interactive Streamlit dashboard.
 
