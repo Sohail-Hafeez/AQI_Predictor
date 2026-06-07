@@ -1,7 +1,8 @@
 import pandas as pd
 import numpy as np
 from pymongo import MongoClient
-import joblib
+import pickle
+import os
 
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, r2_score
@@ -10,7 +11,6 @@ from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, V
 from sklearn.linear_model import LinearRegression
 
 from dotenv import load_dotenv
-import os
 
 # ==================================================
 # LOAD ENV + MONGO
@@ -21,6 +21,8 @@ client = MongoClient(os.getenv("MONGO_URI"))
 db = client[os.getenv("MONGO_DB", "aqi_db")]
 collection = db[os.getenv("MONGO_COLLECTION", "raw_aqi_data")]
 
+model_collection = db["models"]
+
 print("Loading data...")
 
 df = pd.DataFrame(list(collection.find()))
@@ -29,7 +31,7 @@ df["time"] = pd.to_datetime(df["time"])
 df = df.sort_values("time").reset_index(drop=True)
 
 # ==================================================
-# FEATURE ENGINEERING (TIME SERIES)
+# FEATURE ENGINEERING
 # ==================================================
 
 for lag in [1, 2, 3, 6, 12, 24]:
@@ -46,8 +48,9 @@ df["day"] = df["time"].dt.day
 df["month"] = df["time"].dt.month
 
 # ==================================================
-# TARGET (3-DAY FORECAST)
+# TARGET
 # ==================================================
+
 df["t+1"] = df["aqi"].shift(-1)
 df["t+2"] = df["aqi"].shift(-2)
 df["t+3"] = df["aqi"].shift(-3)
@@ -55,7 +58,7 @@ df["t+3"] = df["aqi"].shift(-3)
 df = df.dropna().reset_index(drop=True)
 
 # ==================================================
-# FEATURES & TARGET
+# FEATURES
 # ==================================================
 
 features = [
@@ -72,9 +75,6 @@ features = [
 X = df[features]
 y = df[["t+1", "t+2", "t+3"]]
 
-# ==================================================
-# TRAIN TEST SPLIT (NO SHUFFLE)
-# ==================================================
 split = int(len(df) * 0.8)
 
 X_train, X_test = X.iloc[:split], X.iloc[split:]
@@ -86,21 +86,11 @@ y_train, y_test = y.iloc[:split], y.iloc[split:]
 
 models = {
     "linear": MultiOutputRegressor(LinearRegression()),
-    
-    "rf": MultiOutputRegressor(
-        RandomForestRegressor(n_estimators=200, max_depth=12, random_state=42)
-    ),
-    
-    "gbr": MultiOutputRegressor(
-        GradientBoostingRegressor(n_estimators=200, learning_rate=0.1, max_depth=5)
-    )
+    "rf": MultiOutputRegressor(RandomForestRegressor(n_estimators=200, max_depth=12, random_state=42)),
+    "gbr": MultiOutputRegressor(GradientBoostingRegressor(n_estimators=200, learning_rate=0.1, max_depth=5))
 }
 
-# ==================================================
-# TRAIN + EVALUATE
-# ==================================================
-
-def evaluate_model(name, model):
+def evaluate(name, model):
     model.fit(X_train, y_train)
     preds = model.predict(X_test)
 
@@ -118,12 +108,8 @@ def evaluate_model(name, model):
 results = {}
 
 for name, model in models.items():
-    trained_model, score = evaluate_model(name, model)
-    results[name] = (trained_model, score)
-
-# ==================================================
-# BEST MODEL SELECTION
-# ==================================================
+    trained, score = evaluate(name, model)
+    results[name] = (trained, score)
 
 best_model_name = max(results, key=lambda k: results[k][1])
 best_model = results[best_model_name][0]
@@ -131,7 +117,7 @@ best_model = results[best_model_name][0]
 print("\nBEST MODEL:", best_model_name)
 
 # ==================================================
-# ENSEMBLE MODEL (Voting Regressor)
+# ENSEMBLE
 # ==================================================
 
 ensemble = MultiOutputRegressor(
@@ -144,22 +130,23 @@ ensemble = MultiOutputRegressor(
 
 ensemble.fit(X_train, y_train)
 
-ensemble_preds = ensemble.predict(X_test)
-
-ens_mse = mean_squared_error(y_test, ensemble_preds)
-ens_rmse = np.sqrt(ens_mse)
-ens_r2 = r2_score(y_test, ensemble_preds)
-
-print("\nENSEMBLE RESULTS")
-print("MSE :", ens_mse)
-print("RMSE:", ens_rmse)
-print("R2  :", ens_r2)
-
 # ==================================================
-# SAVE BEST MODEL + ENSEMBLE
+# SAVE TO MONGODB (NOT LOCAL)
 # ==================================================
 
-joblib.dump(best_model, "best_model.pkl")
-joblib.dump(ensemble, "ensemble_model.pkl")
+model_bytes = pickle.dumps(best_model)
+ensemble_bytes = pickle.dumps(ensemble)
 
-print("\nModels saved ✔")
+model_collection.update_one(
+    {"_id": "best_model"},
+    {"$set": {"model": model_bytes, "name": best_model_name}},
+    upsert=True
+)
+
+model_collection.update_one(
+    {"_id": "ensemble_model"},
+    {"$set": {"model": ensemble_bytes}},
+    upsert=True
+)
+
+print("\nModels saved to MongoDB ✔")
