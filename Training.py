@@ -27,7 +27,7 @@ print("Loading data...")
 
 df = pd.DataFrame(list(collection.find()))
 
-df["time"] = pd.to_datetime(df["time"])
+df["time"] = pd.to_datetime(df["time"], format="mixed", utc=True)
 df = df.sort_values("time").reset_index(drop=True)
 
 # ==================================================
